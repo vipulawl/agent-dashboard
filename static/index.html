@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <style>
+    [x-cloak] { display: none !important; }
+    body { background: #0f172a; color: #e2e8f0; font-family: ui-sans-serif, system-ui, sans-serif; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+    .pulse-dot { animation: pulse 2s cubic-bezier(0.4,0,0.6,1) infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+    pre { white-space: pre-wrap; word-break: break-all; }
+    .fade-in { animation: fadeIn .15s ease; }
+    @keyframes fadeIn { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:none} }
+  </style>
+</head>
+<body x-data="app()" x-init="init()" class="min-h-screen">
+
+  <!-- Sidebar -->
+  <aside class="fixed left-0 top-0 h-full w-52 bg-slate-900 border-r border-slate-800 flex flex-col z-20">
+    <div class="px-4 pt-5 pb-4 border-b border-slate-800">
+      <div class="flex items-center gap-2">
+        <div class="w-7 h-7 rounded-lg bg-blue-600 flex items-center justify-center text-sm">⚡</div>
+        <span class="font-bold text-white text-sm">AgentDash</span>
+      </div>
+      <div class="text-xs text-slate-500 mt-1.5 pl-0.5">Agent Observability</div>
+    </div>
+
+    <nav class="flex-1 p-2 space-y-0.5 mt-1">
+      <template x-for="item in navItems" :key="item.id">
+        <button
+          @click="navigate(item.id)"
+          :class="page === item.id
+            ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30'
+            : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800 border border-transparent'"
+          class="w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2.5">
+          <span x-text="item.icon" class="text-base leading-none"></span>
+          <span x-text="item.label"></span>
+          <span x-show="item.id === 'failures' && kpis.failed_runs > 0"
+            class="ml-auto bg-red-500/20 text-red-400 text-xs px-1.5 py-0.5 rounded-full border border-red-500/30"
+            x-text="kpis.failed_runs"></span>
+          <span x-show="item.id === 'overview' && kpis.running_count > 0"
+            class="ml-auto flex items-center gap-1 text-xs text-yellow-400">
+            <span class="w-1.5 h-1.5 rounded-full bg-yellow-400 pulse-dot"></span>
+            <span x-text="kpis.running_count"></span>
+          </span>
+        </button>
+      </template>
+    </nav>
+
+    <div class="px-3 pb-4 space-y-1">
+      <div class="text-xs text-slate-600 px-1">Auto-refresh every 30s</div>
+      <div class="text-xs text-slate-600 px-1 truncate" x-text="dbLabel"></div>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="ml-52 min-h-screen">
+    <div class="p-6 max-w-7xl">
+
+      <!-- ── OVERVIEW ── -->
+      <div x-show="page === 'overview'" x-cloak class="fade-in">
+        <div class="flex items-center justify-between mb-6">
+          <h1 class="text-xl font-bold text-white">Overview</h1>
+          <div class="text-xs text-slate-500" x-text="lastRefreshed ? 'Updated ' + lastRefreshed : ''"></div>
+        </div>
+
+        <!-- KPI cards -->
+        <div class="grid grid-cols-4 gap-4 mb-6">
+          <div class="bg-slate-800/80 rounded-xl p-4 border border-slate-700/60">
+            <div class="text-xs text-slate-400 font-medium uppercase tracking-widest mb-2">Total Runs</div>
+            <div class="text-3xl font-bold text-white" x-text="kpis.total_runs ?? '—'"></div>
+            <div class="text-xs text-slate-500 mt-1" x-text="kpis.running_count > 0 ? kpis.running_count + ' running now' : 'none running'"></div>
+          </div>
+          <div class="bg-slate-800/80 rounded-xl p-4 border border-slate-700/60">
+            <div class="text-xs text-slate-400 font-medium uppercase tracking-widest mb-2">Success Rate</div>
+            <div class="text-3xl font-bold"
+              :class="(kpis.success_rate ?? 100) >= 90 ? 'text-green-400' : (kpis.success_rate ?? 100) >= 70 ? 'text-yellow-400' : 'text-red-400'"
+              x-text="(kpis.success_rate ?? '—') + '%'"></div>
+            <div class="text-xs text-slate-500 mt-1" x-text="kpis.failed_runs + ' failed'"></div>
+          </div>
+          <div class="bg-slate-800/80 rounded-xl p-4 border border-slate-700/60">
+            <div class="text-xs text-slate-400 font-medium uppercase tracking-widest mb-2">Total Tokens</div>
+            <div class="text-3xl font-bold text-blue-400" x-text="formatTokens(kpis.total_tokens)"></div>
+            <div class="text-xs text-slate-500 mt-1" x-text="'avg ' + formatDuration(kpis.avg_duration_seconds) + '/run'"></div>
+          </div>
+          <div class="bg-slate-800/80 rounded-xl p-4 border border-slate-700/60">
+            <div class="text-xs text-slate-400 font-medium uppercase tracking-widest mb-2">Tool Calls</div>
+            <div class="text-3xl font-bold text-slate-200" x-text="kpis.total_tool_calls ?? '—'"></div>
+            <div class="text-xs mt-1"
+              :class="(kpis.tool_error_rate ?? 0) > 10 ? 'text-red-400' : 'text-slate-500'"
+              x-text="(kpis.tool_error_rate ?? 0) + '% error rate'"></div>
+          </div>
+        </div>
+
+        <!-- Timeline + agent stats -->
+        <div class="grid grid-cols-3 gap-4 mb-6">
+          <div class="col-span-2 bg-slate-800/80 rounded-xl p-4 border border-slate-700/60">
+            <div class="text-sm font-semibold text-slate-300 mb-4">Runs — Last 7 Days</div>
+            <canvas id="timelineChart" height="160"></canvas>
+          </div>
+          <div class="bg-slate-800/80 rounded-xl p-4 border border-slate-700/60">
+            <div class="text-sm font-semibold text-slate-300 mb-4">Per Agent</div>
+            <div class="space-y-3">
+              <template x-for="s in agentStatsOverview" :key="s.agent_name">
+                <div>
+                  <div class="flex items-center justify-between mb-1">
+                    <span class="text-sm text-slate-300 font-medium capitalize" x-text="s.agent_name"></span>
+                    <div class="flex items-center gap-2 text-xs">
+                      <span class="text-green-400" x-text="s.successes + '✓'"></span>
+                      <span x-show="s.failures > 0" class="text-red-400" x-text="s.failures + '✗'"></span>
+                    </div>
+                  </div>
+                  <div class="flex gap-2 text-xs text-slate-500">
+                    <span x-text="formatDuration(s.avg_duration_seconds) + ' avg'"></span>
+                    <span>·</span>
+                    <span x-text="(s.avg_iterations || 0).toFixed(1) + ' iters'"></span>
+                  </div>
+                </div>
+              </template>
+              <div x-show="!agentStatsOverview.length" class="text-slate-600 text-sm text-center py-4">No runs yet</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Recent runs + top errors -->
+        <div class="grid grid-cols-3 gap-4">
+          <div class="col-span-2 bg-slate-800/80 rounded-xl border border-slate-700/60 overflow-hidden">
+            <div class="px-4 py-3 border-b border-slate-700/60 flex items-center justify-between">
+              <span class="text-sm font-semibold text-slate-300">Recent Runs</span>
+              <button @click="navigate('runs')" class="text-xs text-blue-400 hover:text-blue-300 transition">View all →</button>
+            </div>
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-slate-500 text-xs border-b border-slate-700/40">
+                  <th class="px-4 py-2.5 text-left font-medium">Agent</th>
+                  <th class="px-4 py-2.5 text-left font-medium">Status</th>
+                  <th class="px-4 py-2.5 text-left font-medium">Duration</th>
+                  <th class="px-4 py-2.5 text-left font-medium">Tokens</th>
+                  <th class="px-4 py-2.5 text-left font-medium">Started</th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="run in recentRuns" :key="run.run_id">
+                  <tr class="border-b border-slate-700/30 hover:bg-slate-700/30 cursor-pointer transition"
+                    @click="navigate('run-detail', run.run_id)">
+                    <td class="px-4 py-2.5 text-slate-300 text-xs font-medium capitalize" x-text="run.agent_name"></td>
+                    <td class="px-4 py-2.5">
+                      <span :class="statusBadge(run.status)" class="px-2 py-0.5 rounded-full text-xs font-medium" x-text="run.status"></span>
+                    </td>
+                    <td class="px-4 py-2.5 text-slate-400 text-xs" x-text="formatDuration(run.duration_seconds)"></td>
+                    <td class="px-4 py-2.5 text-slate-400 text-xs" x-text="formatTokens((run.tokens_input||0)+(run.tokens_output||0))"></td>
+                    <td class="px-4 py-2.5 text-slate-500 text-xs" x-text="timeAgo(run.started_at)"></td>
+                  </tr>
+                </template>
+                <tr x-show="!recentRuns.length">
+                  <td colspan="5" class="px-4 py-8 text-center text-slate-600 text-sm">No runs yet</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="bg-slate-800/80 rounded-xl border border-slate-700/60 overflow-hidden">
+            <div class="px-4 py-3 border-b border-slate-700/60">
+              <span class="text-sm font-semibold text-slate-300">Top Errors</span>
+            </div>
+            <div class="p-3 space-y-2">
+              <template x-for="err in topErrors" :key="err.pattern">
+                <div class="bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2.5">
+                  <div class="text-xs font-mono text-red-400 leading-relaxed" x-text="err.pattern"></div>
+                  <div class="text-xs text-slate-500 mt-1.5" x-text="err.count + ' occurrence' + (err.count > 1 ? 's' : '')"></div>
+                </div>
+              </template>
+              <div x-show="!topErrors.length" class="text-center text-slate-600 text-sm py-6">No errors 🎉</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── ALL RUNS ── -->
+      <div x-show="page === 'runs'" x-cloak class="fade-in">
+        <div class="flex items-center justify-between mb-6">
+          <h1 class="text-xl font-bold text-white">All Runs</h1>
+          <div class="flex items-center gap-3">
+            <select x-model="runsFilter.agent" @change="runsPage=1; loadRuns()"
+              class="bg-slate-800 border border-slate-700 text-sm text-slate-300 rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
+              <option value="">All agents</option>
+              <template x-for="n in agentNames" :key="n">
+                <option :value="n" x-text="n"></option>
+              </template>
+            </select>
+            <select x-model="runsFilter.status" @change="runsPage=1; loadRuns()"
+              class="bg-slate-800 border border-slate-700 text-sm text-slate-300 rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
+              <option value="">All statuses</option>
+              <option value="success">Success</option>
+              <option value="failed">Failed</option>
+              <option value="running">Running</option>
+            </select>
+            <input x-model="runsFilter.search" @input.debounce.400ms="runsPage=1; loadRuns()"
+              placeholder="Search…"
+              class="bg-slate-800 border border-slate-700 text-sm text-slate-300 rounded-lg px-3 py-1.5 w-40 focus:outline-none focus:border-blue-500 placeholder-slate-600">
+          </div>
+        </div>
+
+        <div class="bg-slate-800/80 rounded-xl border border-slate-700/60 overflow-hidden">
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-slate-500 text-xs border-b border-slate-700/60">
+                  <th class="px-4 py-3 text-left font-medium">Run ID</th>
+                  <th class="px-4 py-3 text-left font-medium">Agent</th>
+                  <th class="px-4 py-3 text-left font-medium">Status</th>
+                  <th class="px-4 py-3 text-left font-medium">Trigger</th>
+                  <th class="px-4 py-3 text-right font-medium">Duration</th>
+                  <th class="px-4 py-3 text-right font-medium">Iters</th>
+                  <th class="px-4 py-3 text-right font-medium">Tokens</th>
+                  <th class="px-4 py-3 text-left font-medium">Started</th>
+                  <th class="px-4 py-3 text-left font-medium">Summary</th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="run in runsList" :key="run.run_id">
+                  <tr class="border-b border-slate-700/30 hover:bg-slate-700/30 cursor-pointer transition"
+                    @click="navigate('run-detail', run.run_id)">
+                    <td class="px-4 py-2.5 font-mono text-xs text-blue-400/80" x-text="run.run_id"></td>
+                    <td class="px-4 py-2.5 text-slate-300 text-xs font-medium capitalize" x-text="run.agent_name"></td>
+                    <td class="px-4 py-2.5">
+                      <span :class="statusBadge(run.status)" class="px-2 py-0.5 rounded-full text-xs font-medium" x-text="run.status"></span>
+                    </td>
+                    <td class="px-4 py-2.5 text-slate-500 text-xs" x-text="run.trigger || 'manual'"></td>
+                    <td class="px-4 py-2.5 text-slate-400 text-xs text-right" x-text="formatDuration(run.duration_seconds)"></td>
+                    <td class="px-4 py-2.5 text-slate-400 text-xs text-right" x-text="run.iterations || 0"></td>
+                    <td class="px-4 py-2.5 text-slate-400 text-xs text-right" x-text="formatTokens((run.tokens_input||0)+(run.tokens_output||0))"></td>
+                    <td class="px-4 py-2.5 text-slate-500 text-xs" x-text="timeAgo(run.started_at)"></td>
+                    <td class="px-4 py-2.5 text-slate-500 text-xs max-w-xs truncate" x-text="run.run_summary || '—'"></td>
+                  </tr>
+                </template>
+                <tr x-show="!runsList.length">
+                  <td colspan="9" class="px-4 py-10 text-center text-slate-600 text-sm">No runs match your filters</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="px-4 py-3 border-t border-slate-700/40 flex items-center justify-between">
+            <span class="text-xs text-slate-500"
+              x-text="'Showing ' + runsList.length + ' of ' + runsTotal + ' runs'"></span>
+            <div class="flex items-center gap-2">
+              <button @click="runsPage--; loadRuns()" :disabled="runsPage <= 1"
+                class="text-xs px-3 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg transition">
+                ← Prev
+              </button>
+              <span class="text-xs text-slate-500" x-text="'Page ' + runsPage"></span>
+              <button @click="runsPage++; loadRuns()" :disabled="runsList.length < 20"
+                class="text-xs px-3 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg transition">
+                Next →
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── RUN DETAIL ── -->
+      <div x-show="page === 'run-detail'" x-cloak class="fade-in">
+        <div class="mb-5">
+          <button @click="navigate('runs')"
+            class="text-sm text-slate-400 hover:text-white transition flex items-center gap-1.5">
+            ← Back to runs
+          </button>
+        </div>
+
+        <template x-if="currentRun">
+          <div>
+            <!-- Header card -->
+            <div class="bg-slate-800/80 rounded-xl border border-slate-700/60 p-5 mb-4">
+              <div class="flex items-start justify-between mb-4">
+                <div>
+                  <div class="flex items-center gap-3 mb-1.5">
+                    <span class="text-xl font-bold text-white capitalize" x-text="currentRun.agent_name"></span>
+                    <span :class="statusBadge(currentRun.status)"
+                      class="px-2.5 py-0.5 rounded-full text-xs font-semibold" x-text="currentRun.status"></span>
+                    <span x-show="currentRun.status === 'running'"
+                      class="flex items-center gap-1 text-xs text-yellow-400">
+                      <span class="w-1.5 h-1.5 rounded-full bg-yellow-400 pulse-dot"></span> live
+                    </span>
+                  </div>
+                  <div class="font-mono text-xs text-slate-500" x-text="currentRun.run_id"></div>
+                  <div x-show="currentRun.topic_title" class="text-xs text-slate-400 mt-1"
+                    x-text="'Topic: ' + currentRun.topic_title"></div>
+                </div>
+                <div class="text-right text-xs text-slate-500 space-y-1">
+                  <div x-text="formatDate(currentRun.started_at)"></div>
+                  <div x-text="'Trigger: ' + (currentRun.trigger || 'manual')"></div>
+                </div>
+              </div>
+
+              <!-- Metrics row -->
+              <div class="grid grid-cols-5 gap-3">
+                <div class="bg-slate-700/50 rounded-lg p-3 text-center">
+                  <div class="text-xs text-slate-400 mb-1">Duration</div>
+                  <div class="text-sm font-bold text-white" x-text="formatDuration(currentRun.duration_seconds)"></div>
+                </div>
+                <div class="bg-slate-700/50 rounded-lg p-3 text-center">
+                  <div class="text-xs text-slate-400 mb-1">Iterations</div>
+                  <div class="text-sm font-bold text-white" x-text="currentRun.iterations || 0"></div>
+                </div>
+                <div class="bg-slate-700/50 rounded-lg p-3 text-center">
+                  <div class="text-xs text-slate-400 mb-1">Tokens In</div>
+                  <div class="text-sm font-bold text-blue-400" x-text="formatTokens(currentRun.tokens_input)"></div>
+                </div>
+                <div class="bg-slate-700/50 rounded-lg p-3 text-center">
+                  <div class="text-xs text-slate-400 mb-1">Tokens Out</div>
+                  <div class="text-sm font-bold text-blue-400" x-text="formatTokens(currentRun.tokens_output)"></div>
+                </div>
+                <div class="bg-slate-700/50 rounded-lg p-3 text-center">
+                  <div class="text-xs text-slate-400 mb-1">Tool Calls</div>
+                  <div class="text-sm font-bold text-white" x-text="runTools.length"></div>
+                </div>
+              </div>
+
+              <!-- Run summary -->
+              <div x-show="currentRun.run_summary"
+                class="mt-4 px-4 py-3 bg-slate-700/30 border border-slate-600/40 rounded-lg text-sm text-slate-300 leading-relaxed"
+                x-text="currentRun.run_summary"></div>
+
+              <!-- Error box -->
+              <div x-show="currentRun.error_message"
+                class="mt-4 px-4 py-3 bg-red-500/10 border border-red-500/30 rounded-lg">
+                <div class="text-xs font-semibold text-red-400 uppercase tracking-wide mb-1.5">Error</div>
+                <div class="text-sm font-mono text-red-300 leading-relaxed" x-text="currentRun.error_message"></div>
+              </div>
+            </div>
+
+            <!-- Tab bar -->
+            <div class="flex gap-1 mb-4">
+              <button @click="runDetailTab = 'iterations'"
+                :class="runDetailTab === 'iterations'
+                  ? 'bg-blue-600/20 text-blue-400 border-blue-500/40'
+                  : 'bg-slate-800/60 text-slate-400 hover:text-white border-slate-700/60'"
+                class="px-4 py-2 rounded-lg text-sm font-medium border transition">
+                Iteration Timeline
+                <span class="ml-1.5 text-xs opacity-70" x-text="'(' + runIterations.length + ')'"></span>
+              </button>
+              <button @click="runDetailTab = 'tools'"
+                :class="runDetailTab === 'tools'
+                  ? 'bg-blue-600/20 text-blue-400 border-blue-500/40'
+                  : 'bg-slate-800/60 text-slate-400 hover:text-white border-slate-700/60'"
+                class="px-4 py-2 rounded-lg text-sm font-medium border transition">
+                Tool Calls Table
+                <span class="ml-1.5 text-xs opacity-70" x-text="'(' + runTools.length + ')'"></span>
+              </button>
+            </div>
+
+            <!-- ITERATIONS TAB -->
+            <div x-show="runDetailTab === 'iterations'" class="space-y-3">
+              <template x-for="iter in runIterations" :key="iter.id">
+                <div class="bg-slate-800/80 rounded-xl border overflow-hidden transition"
+                  :class="iter.tool_names && iter.tool_names.length ? 'border-slate-700/60' : 'border-slate-700/40'">
+                  <!-- Iteration header (always visible) -->
+                  <div class="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-slate-700/20 select-none"
+                    @click="toggleIteration(iter.id)">
+                    <div class="w-7 h-7 rounded-full bg-blue-600/20 border border-blue-500/40 flex items-center justify-center text-xs font-bold text-blue-400 shrink-0"
+                      x-text="iter.iteration_num"></div>
+                    <div class="flex-1 min-w-0">
+                      <div class="flex items-center gap-2 flex-wrap">
+                        <span class="text-sm font-medium text-slate-200">Turn <span x-text="iter.iteration_num"></span></span>
+                        <template x-for="tname in (iter.tool_names || [])" :key="tname">
+                          <span class="px-1.5 py-0.5 bg-slate-700/60 text-slate-400 text-xs rounded font-mono" x-text="tname"></span>
+                        </template>
+                        <span x-show="iter.stop_reason"
+                          class="px-1.5 py-0.5 text-xs rounded"
+                          :class="iter.stop_reason === 'end_turn' || iter.stop_reason === 'stop' ? 'bg-green-500/10 text-green-400' : 'bg-slate-700/60 text-slate-400'"
+                          x-text="iter.stop_reason"></span>
+                      </div>
+                      <div class="text-xs text-slate-500 mt-0.5">
+                        <span x-text="formatMs(iter.duration_ms)"></span>
+                        <span class="mx-1.5 opacity-40">·</span>
+                        <span x-text="formatTokens(iter.tokens_input) + ' in'"></span>
+                        <span class="mx-1 opacity-40">/</span>
+                        <span x-text="formatTokens(iter.tokens_output) + ' out'"></span>
+                      </div>
+                    </div>
+                    <div class="text-slate-600 text-xs shrink-0" x-text="expandedIterations.has(iter.id) ? '▲' : '▼'"></div>
+                  </div>
+
+                  <!-- Expanded content -->
+                  <div x-show="expandedIterations.has(iter.id)" class="border-t border-slate-700/40">
+                    <!-- Tool calls in this iteration -->
+                    <div x-show="getToolsForIteration(iter.iteration_num).length > 0"
+                      class="p-4 border-b border-slate-700/30">
+                      <div class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2.5">Tool Calls</div>
+                      <div class="space-y-2">
+                        <template x-for="tc in getToolsForIteration(iter.iteration_num)" :key="tc.id">
+                          <div class="bg-slate-700/30 border border-slate-600/30 rounded-lg p-3 cursor-pointer hover:border-slate-500/50 transition"
+                            @click="toggleTool(tc.id)">
+                            <div class="flex items-center justify-between mb-1.5">
+                              <div class="flex items-center gap-2">
+                                <span class="text-xs font-mono font-semibold text-slate-200" x-text="tc.tool_name"></span>
+                                <span :class="qualityBadge(tc.quality_signal)"
+                                  class="px-1.5 py-0.5 rounded text-xs font-medium" x-text="tc.quality_signal"></span>
+                                <span x-show="!tc.success" class="text-xs text-red-400">✗ failed</span>
+                              </div>
+                              <span class="text-xs text-slate-600" x-text="formatMs(tc.duration_ms)"></span>
+                            </div>
+                            <div class="text-xs font-mono text-slate-400 leading-relaxed" x-text="tc.result_preview || '—'"></div>
+                            <div x-show="tc.error_message"
+                              class="mt-1.5 text-xs text-red-400 font-mono" x-text="tc.error_message"></div>
+
+                            <!-- Expanded inputs/result -->
+                            <div x-show="expandedTools.has(tc.id)" class="mt-3 grid grid-cols-2 gap-3">
+                              <div>
+                                <div class="text-xs font-semibold text-slate-500 mb-1.5">Inputs</div>
+                                <pre class="text-xs text-slate-300 bg-slate-900/60 rounded p-2.5 overflow-auto max-h-48 leading-relaxed"
+                                  x-text="prettyJSON(tc.inputs_json)"></pre>
+                              </div>
+                              <div>
+                                <div class="text-xs font-semibold text-slate-500 mb-1.5">Result</div>
+                                <pre class="text-xs text-slate-300 bg-slate-900/60 rounded p-2.5 overflow-auto max-h-48 leading-relaxed"
+                                  x-text="prettyJSON(tc.result_json)"></pre>
+                              </div>
+                            </div>
+                          </div>
+                        </template>
+                      </div>
+                    </div>
+
+                    <!-- Assistant preview -->
+                    <div x-show="iter.assistant_preview" class="p-4">
+                      <div class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2.5">Assistant</div>
+                      <div class="text-sm text-slate-300 bg-slate-700/20 rounded-lg p-3.5 leading-relaxed whitespace-pre-wrap"
+                        x-text="iter.assistant_preview"></div>
+                    </div>
+
+                    <div x-show="!getToolsForIteration(iter.iteration_num).length && !iter.assistant_preview"
+                      class="p-4 text-xs text-slate-600">No recorded content for this iteration.</div>
+                  </div>
+                </div>
+              </template>
+
+              <div x-show="!runIterations.length"
+                class="bg-slate-800/50 rounded-xl border border-slate-700/40 p-10 text-center text-slate-600 text-sm">
+                No iteration data. Tool calls may still be present in the table view.
+              </div>
+            </div>
+
+            <!-- TOOL CALLS TABLE TAB -->
+            <div x-show="runDetailTab === 'tools'">
+              <div class="bg-slate-800/80 rounded-xl border border-slate-700/60 overflow-hidden">
+                <div class="overflow-x-auto">
+                  <table class="w-full text-sm">
+                    <thead>
+                      <tr class="text-slate-500 text-xs border-b border-slate-700/60">
+                        <th class="px-4 py-3 text-left font-medium">#</th>
+                        <th class="px-4 py-3 text-left font-medium">Tool</th>
+                        <th class="px-4 py-3 text-center font-medium">Turn</th>
+                        <th class="px-4 py-3 text-left font-medium">Quality</th>
+                        <th class="px-4 py-3 text-right font-medium">Duration</th>
+                        <th class="px-4 py-3 text-left font-medium">Result Preview</th>
+                        <th class="px-4 py-3"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <template x-for="tc in runTools" :key="tc.id">
+                        <tr class="border-b border-slate-700/30"
+                          :class="!tc.success ? 'bg-red-500/5' : ''">
+                          <td class="px-4 py-2.5 text-slate-600 text-xs" x-text="tc.seq_num"></td>
+                          <td class="px-4 py-2.5 font-mono text-xs text-slate-200 font-semibold" x-text="tc.tool_name"></td>
+                          <td class="px-4 py-2.5 text-slate-500 text-xs text-center" x-text="tc.iteration_num"></td>
+                          <td class="px-4 py-2.5">
+                            <span :class="qualityBadge(tc.quality_signal)"
+                              class="px-1.5 py-0.5 rounded text-xs font-medium" x-text="tc.quality_signal"></span>
+                          </td>
+                          <td class="px-4 py-2.5 text-slate-400 text-xs text-right" x-text="formatMs(tc.duration_ms)"></td>
+                          <td class="px-4 py-2.5 text-xs font-mono text-slate-400 max-w-sm truncate" x-text="tc.result_preview || '—'"></td>
+                          <td class="px-4 py-2.5">
+                            <button @click="toggleTool(tc.id)"
+                              class="text-xs text-blue-400/70 hover:text-blue-300 transition">
+                              <span x-text="expandedTools.has(tc.id) ? 'hide' : 'details'"></span>
+                            </button>
+                          </td>
+                        </tr>
+                        <!-- Expanded row -->
+                        <tr x-show="expandedTools.has(tc.id)" class="bg-slate-900/40">
+                          <td colspan="7" class="px-4 pb-4 pt-2">
+                            <div class="grid grid-cols-2 gap-3">
+                              <div>
+                                <div class="text-xs font-semibold text-slate-500 mb-1.5">Inputs</div>
+                                <pre class="text-xs text-slate-300 bg-slate-900/60 rounded p-2.5 overflow-auto max-h-56"
+                                  x-text="prettyJSON(tc.inputs_json)"></pre>
+                              </div>
+                              <div>
+                                <div class="text-xs font-semibold text-slate-500 mb-1.5">Result</div>
+                                <pre class="text-xs text-slate-300 bg-slate-900/60 rounded p-2.5 overflow-auto max-h-56"
+                                  x-text="prettyJSON(tc.result_json)"></pre>
+                                <div x-show="tc.error_message"
+                                  class="mt-2 text-xs text-red-400 font-mono bg-red-500/10 rounded px-2 py-1.5"
+                                  x-text="tc.error_message"></div>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      </template>
+                    </tbody>
+                  </table>
+                </div>
+                <div x-show="!runTools.length" class="p-10 text-center text-slate-600 text-sm">No tool calls recorded</div>
+              </div>
+            </div>
+          </div>
+        </template>
+
+        <div x-show="!currentRun" class="text-center text-slate-600 py-20">Loading…</div>
+      </div>
+
+      <!-- ── FAILURES ── -->
+      <div x-show="page === 'failures'" x-cloak class="fade-in">
+        <h1 class="text-xl font-bold text-white mb-6">Failed Runs</h1>
+
+        <!-- Error pattern summary -->
+        <div x-show="Object.keys(errorGroups).length > 0"
+          class="bg-slate-800/80 rounded-xl border border-slate-700/60 p-4 mb-6">
+          <div class="text-sm font-semibold text-slate-300 mb-3">Error Patterns</div>
+          <div class="space-y-1.5">
+            <template x-for="[pattern, count] in sortedErrorGroups()" :key="pattern">
+              <div class="flex items-center gap-3 px-3 py-2 bg-red-500/10 border border-red-500/20 rounded-lg">
+                <span class="text-xs font-mono text-red-400 flex-1 leading-relaxed" x-text="pattern"></span>
+                <span class="text-xs text-slate-400 shrink-0 font-semibold"
+                  x-text="count + '×'"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- Failed runs -->
+        <div class="space-y-3">
+          <template x-for="run in failedRuns" :key="run.run_id">
+            <div class="bg-slate-800/80 rounded-xl border border-red-500/20 hover:border-red-500/40 p-4 cursor-pointer transition"
+              @click="navigate('run-detail', run.run_id)">
+              <div class="flex items-start justify-between mb-2">
+                <div>
+                  <span class="font-semibold text-white capitalize" x-text="run.agent_name"></span>
+                  <span class="ml-2.5 font-mono text-xs text-slate-500" x-text="run.run_id"></span>
+                  <span x-show="run.topic_title" class="ml-2 text-xs text-slate-400"
+                    x-text="'· ' + run.topic_title"></span>
+                </div>
+                <span class="text-xs text-slate-500" x-text="timeAgo(run.started_at)"></span>
+              </div>
+              <div class="text-xs font-mono text-red-300 bg-red-500/10 border border-red-500/20 rounded px-2.5 py-2 leading-relaxed"
+                x-text="run.error_message || 'Unknown error'"></div>
+              <div class="flex gap-4 mt-2.5 text-xs text-slate-500">
+                <span x-text="'Duration: ' + formatDuration(run.duration_seconds)"></span>
+                <span x-text="'Iterations: ' + (run.iterations || 0)"></span>
+                <span x-text="'Trigger: ' + (run.trigger || 'manual')"></span>
+                <span class="text-blue-400/60 hover:text-blue-400 transition">View details →</span>
+              </div>
+            </div>
+          </template>
+          <div x-show="!failedRuns.length"
+            class="bg-slate-800/50 rounded-xl border border-slate-700/40 p-16 text-center">
+            <div class="text-4xl mb-3">🎉</div>
+            <div class="text-slate-400 font-medium">No failed runs</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── TOOLS ── -->
+      <div x-show="page === 'tools'" x-cloak class="fade-in">
+        <h1 class="text-xl font-bold text-white mb-6">Tool Analytics</h1>
+
+        <!-- Per-agent cards -->
+        <div class="grid grid-cols-3 gap-4 mb-6">
+          <template x-for="s in agentStats" :key="s.agent_name">
+            <div class="bg-slate-800/80 rounded-xl border border-slate-700/60 p-4">
+              <div class="font-semibold text-white capitalize mb-3" x-text="s.agent_name"></div>
+              <div class="grid grid-cols-2 gap-y-3 text-xs">
+                <div>
+                  <div class="text-slate-500 mb-0.5">Total Runs</div>
+                  <div class="font-semibold text-slate-200" x-text="s.total_runs"></div>
+                </div>
+                <div>
+                  <div class="text-slate-500 mb-0.5">Success Rate</div>
+                  <div class="font-semibold"
+                    :class="s.successes/s.total_runs >= 0.8 ? 'text-green-400' : 'text-red-400'"
+                    x-text="Math.round(s.successes/s.total_runs*100) + '%'"></div>
+                </div>
+                <div>
+                  <div class="text-slate-500 mb-0.5">Avg Duration</div>
+                  <div class="font-semibold text-slate-300" x-text="formatDuration(s.avg_duration_seconds)"></div>
+                </div>
+                <div>
+                  <div class="text-slate-500 mb-0.5">Avg Iterations</div>
+                  <div class="font-semibold text-slate-300" x-text="(s.avg_iterations || 0).toFixed(1)"></div>
+                </div>
+                <div>
+                  <div class="text-slate-500 mb-0.5">Tokens In</div>
+                  <div class="font-semibold text-blue-400/80" x-text="formatTokens(s.total_tokens_input)"></div>
+                </div>
+                <div>
+                  <div class="text-slate-500 mb-0.5">Tokens Out</div>
+                  <div class="font-semibold text-blue-400/80" x-text="formatTokens(s.total_tokens_output)"></div>
+                </div>
+              </div>
+            </div>
+          </template>
+          <div x-show="!agentStats.length" class="col-span-3 text-center text-slate-600 py-6">No data yet</div>
+        </div>
+
+        <!-- Tool stats table -->
+        <div class="bg-slate-800/80 rounded-xl border border-slate-700/60 overflow-hidden">
+          <div class="px-4 py-3 border-b border-slate-700/60">
+            <span class="text-sm font-semibold text-slate-300">Tool Call Statistics</span>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-slate-500 text-xs border-b border-slate-700/60">
+                  <th class="px-4 py-3 text-left font-medium">Tool Name</th>
+                  <th class="px-4 py-3 text-right font-medium">Total</th>
+                  <th class="px-4 py-3 text-right font-medium">Errors</th>
+                  <th class="px-4 py-3 text-right font-medium">Error %</th>
+                  <th class="px-4 py-3 text-right font-medium">Avg Time</th>
+                  <th class="px-4 py-3 text-left font-medium">Quality Breakdown</th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="s in toolStats" :key="s.tool_name">
+                  <tr class="border-b border-slate-700/30 hover:bg-slate-700/20">
+                    <td class="px-4 py-2.5 font-mono text-xs text-slate-200 font-semibold" x-text="s.tool_name"></td>
+                    <td class="px-4 py-2.5 text-slate-300 text-xs text-right" x-text="s.total_calls"></td>
+                    <td class="px-4 py-2.5 text-xs text-right"
+                      :class="s.errors > 0 ? 'text-red-400' : 'text-slate-500'" x-text="s.errors"></td>
+                    <td class="px-4 py-2.5 text-xs text-right"
+                      :class="s.error_rate > 0.1 ? 'text-red-400' : s.error_rate > 0 ? 'text-yellow-400' : 'text-slate-500'"
+                      x-text="(s.error_rate * 100).toFixed(0) + '%'"></td>
+                    <td class="px-4 py-2.5 text-slate-400 text-xs text-right" x-text="formatMs(s.avg_duration_ms)"></td>
+                    <td class="px-4 py-2.5">
+                      <div class="flex flex-wrap gap-1">
+                        <template x-for="[signal, count] in Object.entries(s.quality_breakdown || {})" :key="signal">
+                          <span :class="qualityBadge(signal)"
+                            class="px-1.5 py-0.5 rounded text-xs font-medium"
+                            x-text="signal + ':' + count"></span>
+                        </template>
+                      </div>
+                    </td>
+                  </tr>
+                </template>
+                <tr x-show="!toolStats.length">
+                  <td colspan="6" class="px-4 py-10 text-center text-slate-600 text-sm">No tool calls recorded yet</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+<script>
+function app() {
+  return {
+    page: 'overview',
+
+    navItems: [
+      { id: 'overview', icon: '📊', label: 'Overview' },
+      { id: 'runs',     icon: '🔄', label: 'All Runs' },
+      { id: 'failures', icon: '❌', label: 'Failures' },
+      { id: 'tools',    icon: '🔧', label: 'Tools' },
+    ],
+
+    dbLabel: '',
+    lastRefreshed: '',
+
+    // Overview
+    kpis: {},
+    recentRuns: [],
+    timeline: [],
+    topErrors: [],
+    agentStatsOverview: [],
+    _chart: null,
+
+    // Runs list
+    runsList: [],
+    runsTotal: 0,
+    runsPage: 1,
+    runsFilter: { agent: '', status: '', search: '' },
+    agentNames: [],
+
+    // Run detail
+    currentRun: null,
+    currentRunId: null,
+    runIterations: [],
+    runTools: [],
+    runDetailTab: 'iterations',
+    expandedIterations: new Set(),
+    expandedTools: new Set(),
+
+    // Failures
+    failedRuns: [],
+    errorGroups: {},
+
+    // Tools
+    toolStats: [],
+    agentStats: [],
+
+    async init() {
+      await this.loadAgentNames();
+      await this.loadOverview();
+      setInterval(() => this.autoRefresh(), 30000);
+    },
+
+    async autoRefresh() {
+      if (this.page === 'overview') {
+        await this.loadOverview();
+      } else if (this.page === 'run-detail' && this.currentRun?.status === 'running') {
+        await this.loadRunDetail(this.currentRunId);
+      }
+    },
+
+    async navigate(page, param = null) {
+      this.page = page;
+      this.expandedIterations = new Set();
+      this.expandedTools = new Set();
+      if (page === 'overview')    await this.loadOverview();
+      else if (page === 'runs')   { this.runsPage = 1; await this.loadRuns(); }
+      else if (page === 'run-detail') { this.currentRunId = param; this.currentRun = null; await this.loadRunDetail(param); }
+      else if (page === 'failures') await this.loadFailures();
+      else if (page === 'tools')  await this.loadTools();
+    },
+
+    async loadAgentNames() {
+      const data = await this.get('/api/agent-names');
+      this.agentNames = data || [];
+    },
+
+    async loadOverview() {
+      const data = await this.get('/api/overview');
+      if (!data) return;
+      this.kpis = data.kpis || {};
+      this.recentRuns = data.recent_runs || [];
+      this.timeline = data.timeline || [];
+      this.topErrors = data.top_errors || [];
+      this.agentStatsOverview = data.agent_stats || [];
+      this.lastRefreshed = new Date().toLocaleTimeString();
+      await this.$nextTick();
+      this.renderChart();
+    },
+
+    renderChart() {
+      const el = document.getElementById('timelineChart');
+      if (!el) return;
+      if (this._chart) { this._chart.destroy(); this._chart = null; }
+      const labels = this.timeline.map(d => d.date);
+      this._chart = new Chart(el, {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [
+            { label: 'Success', data: this.timeline.map(d => d.success), backgroundColor: 'rgba(74,222,128,.55)', borderColor: 'rgba(74,222,128,.8)', borderWidth: 1 },
+            { label: 'Failed',  data: this.timeline.map(d => d.failed),  backgroundColor: 'rgba(248,113,113,.55)', borderColor: 'rgba(248,113,113,.8)', borderWidth: 1 },
+            { label: 'Running', data: this.timeline.map(d => d.running || 0), backgroundColor: 'rgba(251,191,36,.55)', borderColor: 'rgba(251,191,36,.8)', borderWidth: 1 },
+          ]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: true,
+          plugins: {
+            legend: { labels: { color: '#94a3b8', font: { size: 11 } } },
+            tooltip: { mode: 'index' }
+          },
+          scales: {
+            x: { stacked: true, ticks: { color: '#475569', font: { size: 10 } }, grid: { color: 'rgba(51,65,85,.4)' } },
+            y: { stacked: true, beginAtZero: true, ticks: { color: '#475569', font: { size: 10 }, stepSize: 1 }, grid: { color: 'rgba(51,65,85,.4)' } }
+          }
+        }
+      });
+    },
+
+    async loadRuns() {
+      const q = new URLSearchParams({
+        page: this.runsPage, limit: 20,
+        agent: this.runsFilter.agent,
+        status: this.runsFilter.status,
+        search: this.runsFilter.search,
+      });
+      const data = await this.get('/api/runs?' + q);
+      if (!data) return;
+      this.runsList = data.runs || [];
+      this.runsTotal = data.total || 0;
+    },
+
+    async loadRunDetail(runId) {
+      const [run, iters, tools] = await Promise.all([
+        this.get('/api/runs/' + runId),
+        this.get('/api/runs/' + runId + '/iterations'),
+        this.get('/api/runs/' + runId + '/tools'),
+      ]);
+      this.currentRun = run;
+      this.runIterations = iters || [];
+      this.runTools = tools || [];
+      this.runDetailTab = 'iterations';
+    },
+
+    async loadFailures() {
+      const data = await this.get('/api/failures');
+      if (!data) return;
+      this.failedRuns = data.runs || [];
+      this.errorGroups = data.error_groups || {};
+    },
+
+    async loadTools() {
+      const [tools, agents] = await Promise.all([
+        this.get('/api/tool-stats'),
+        this.get('/api/agent-stats'),
+      ]);
+      this.toolStats = tools || [];
+      this.agentStats = agents || [];
+    },
+
+    // Helpers
+    getToolsForIteration(iterNum) {
+      return this.runTools.filter(tc => tc.iteration_num === iterNum);
+    },
+
+    toggleIteration(id) {
+      const s = new Set(this.expandedIterations);
+      s.has(id) ? s.delete(id) : s.add(id);
+      this.expandedIterations = s;
+    },
+
+    toggleTool(id) {
+      const s = new Set(this.expandedTools);
+      s.has(id) ? s.delete(id) : s.add(id);
+      this.expandedTools = s;
+    },
+
+    sortedErrorGroups() {
+      return Object.entries(this.errorGroups).sort((a, b) => b[1] - a[1]);
+    },
+
+    prettyJSON(str) {
+      if (!str) return '—';
+      try { return JSON.stringify(JSON.parse(str), null, 2); }
+      catch { return str; }
+    },
+
+    statusBadge(s) {
+      return {
+        success: 'bg-green-500/20 text-green-400 border border-green-500/30',
+        failed:  'bg-red-500/20 text-red-400 border border-red-500/30',
+        running: 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30',
+      }[s] || 'bg-slate-500/20 text-slate-400 border border-slate-500/30';
+    },
+
+    qualityBadge(s) {
+      return {
+        ok:      'bg-green-500/20 text-green-400',
+        error:   'bg-red-500/20 text-red-400',
+        skipped: 'bg-slate-500/20 text-slate-400',
+        empty:   'bg-yellow-500/20 text-yellow-400',
+        sparse:  'bg-orange-500/20 text-orange-400',
+        no_data: 'bg-yellow-500/20 text-yellow-400',
+        no_new:  'bg-slate-500/20 text-slate-400',
+      }[s] || 'bg-slate-500/20 text-slate-400';
+    },
+
+    formatDuration(sec) {
+      if (!sec && sec !== 0) return '—';
+      if (sec < 60) return sec.toFixed(1) + 's';
+      const m = Math.floor(sec / 60), s = Math.round(sec % 60);
+      return m + 'm' + (s ? ' ' + s + 's' : '');
+    },
+
+    formatMs(ms) {
+      if (!ms && ms !== 0) return '—';
+      if (ms < 1000) return ms + 'ms';
+      return (ms / 1000).toFixed(1) + 's';
+    },
+
+    formatTokens(n) {
+      if (!n) return '0';
+      if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+      if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+      return String(n);
+    },
+
+    formatDate(ts) {
+      if (!ts) return '—';
+      return new Date(ts).toLocaleString();
+    },
+
+    timeAgo(ts) {
+      if (!ts) return '—';
+      const diff = Date.now() - new Date(ts).getTime();
+      const m = Math.floor(diff / 60000);
+      if (m < 1) return 'just now';
+      if (m < 60) return m + 'm ago';
+      if (m < 1440) return Math.floor(m / 60) + 'h ago';
+      return Math.floor(m / 1440) + 'd ago';
+    },
+
+    async get(url) {
+      try {
+        const r = await fetch(url);
+        if (!r.ok) return null;
+        return await r.json();
+      } catch (e) {
+        console.error('API error', url, e);
+        return null;
+      }
+    }
+  };
+}
+</script>
+</body>
+</html>
