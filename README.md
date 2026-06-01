@@ -1,6 +1,6 @@
 # Agent Dashboard
 
-Self-hosted observability dashboard for agentic flows. Captures every LLM turn, every tool call, every failure with full inputs/outputs — and displays it in a searchable, real-time web UI.
+Self-hosted observability dashboard for agentic flows. Captures every LLM turn, every tool call, every failure with full inputs/outputs — displayed in a searchable, real-time web UI.
 
 ```
 Overview → All Runs → Run Detail (iteration timeline + tool call table)
@@ -18,11 +18,13 @@ Overview → All Runs → Run Detail (iteration timeline + tool call table)
 - **Failure analysis**: all failed runs grouped by error pattern
 - **Tool analytics**: per-tool call counts, error rates, avg duration, quality breakdown
 
-Auto-refreshes every 30 seconds. Live indicator for running agents.
+Auto-refreshes every 30 seconds. Live indicator for currently-running agents.
 
 ---
 
-## Setup
+## Dashboard setup (local, one-time)
+
+Run these once in the agent-dashboard repo:
 
 ```bash
 cd ~/Projects/agent-dashboard
@@ -33,81 +35,281 @@ pip install -r requirements.txt
 
 ---
 
-## Usage
+## Wiring up an agent that runs on GitHub Actions
 
-### Point at your blogging-agent DB (zero config)
+This is a 4-step process. Steps 1–3 happen in your **agent's repo**. Step 4 happens locally after a run completes.
+
+---
+
+### Step 1 — Copy `run_context.py` into your agent repo
+
+`run_context.py` is a single self-contained file in the root of this repo. It has no dependencies beyond the Python standard library — just `sqlite3`, `json`, `uuid`, `time`, `os`, and `datetime`.
+
+Copy it into the root of your agent project:
 
 ```bash
-python main.py serve --db ~/blogging-agent/blogging_agent.db
+cp ~/Projects/agent-dashboard/run_context.py ~/your-agent-project/
 ```
 
-### Start with a fresh DB
+Commit it:
 
 ```bash
-python main.py serve
-# → http://127.0.0.1:7777
-```
-
-### Custom port / public binding
-
-```bash
-python main.py serve --db ~/blogging-agent/blogging_agent.db --port 8080 --host 0.0.0.0
+cd ~/your-agent-project
+git add run_context.py
+git commit -m "add: agent dashboard run_context SDK"
+git push
 ```
 
 ---
 
-## Integrate into any new agent
+### Step 2 — Wrap your agent loop with `RunContext`
+
+Open your agent's main Python file. Import `RunContext` and wrap your existing agent loop with it. You only need to add lines — do not change your existing tool-calling or LLM logic.
+
+#### Full example for an Anthropic `client.messages.create` loop
 
 ```python
-from agent_dashboard import RunContext
+import time
+from datetime import datetime
+from run_context import RunContext
 
-with RunContext("my_agent", db_path="agent_dashboard.db") as ctx:
-    # Log a tool call manually
-    import time
-    t = time.monotonic()
-    result = call_some_tool(inputs)
-    ctx.log_tool_call(
-        tool_name="some_tool",
-        inputs=inputs,
-        result=result,
-        duration_ms=int((time.monotonic() - t) * 1000),
-    )
+DB_PATH = "./agent_runs.db"   # SQLite file that will be committed to git
 
-    # Log an LLM turn
-    ctx.add_tokens(inp=1200, out=400)
-    ctx.increment_iteration()
-    ctx.log_iteration(
-        tokens_input=1200, tokens_output=400,
-        stop_reason="tool_use",
-        assistant_preview="I'll search for...",
-        tool_names=["some_tool"],
-        started_at=datetime.now().isoformat(),
-        duration_ms=3400,
-    )
+def run_my_agent(user_prompt: str):
+    with RunContext(
+        agent_name="my_agent",          # short label shown in the dashboard
+        db_path=DB_PATH,
+        topic_title=user_prompt[:80],   # optional — human-readable label
+        metadata={"model": MODEL},      # optional — any extra info
+    ) as ctx:
 
-    # Mark failure (optional — __exit__ catches exceptions automatically)
-    # ctx.mark_failed("Connection timeout")
+        messages = [{"role": "user", "content": user_prompt}]
+
+        while True:
+            turn_start = time.time()
+
+            response = client.messages.create(
+                model=MODEL,
+                max_tokens=4096,
+                tools=tools,
+                messages=messages,
+            )
+
+            # ── log the LLM turn ──────────────────────────────────────────
+            text = next(
+                (b.text for b in response.content if hasattr(b, "text")), ""
+            )
+            tool_names = [
+                b.name for b in response.content if b.type == "tool_use"
+            ]
+            ctx.log_iteration(
+                tokens_input=response.usage.input_tokens,
+                tokens_output=response.usage.output_tokens,
+                stop_reason=response.stop_reason,
+                assistant_preview=text[:200],
+                tool_names=tool_names,
+                duration_ms=int((time.time() - turn_start) * 1000),
+            )
+            # ─────────────────────────────────────────────────────────────
+
+            if response.stop_reason == "end_turn":
+                break
+
+            # run tool calls
+            tool_results = []
+            for block in response.content:
+                if block.type != "tool_use":
+                    continue
+
+                # ── log each tool call ────────────────────────────────────
+                t0 = time.time()
+                result = execute_tool(block.name, block.input)   # YOUR existing function
+                ctx.log_tool_call(
+                    tool_name=block.name,
+                    inputs=dict(block.input),
+                    result=result,
+                    duration_ms=int((time.time() - t0) * 1000),
+                )
+                # ─────────────────────────────────────────────────────────
+
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": str(result),
+                })
+
+            messages = messages + [
+                {"role": "assistant", "content": response.content},
+                {"role": "user",      "content": tool_results},
+            ]
 ```
 
-### RunContext options
+#### What each method does
 
-| Arg | Default | Description |
-|---|---|---|
-| `agent_name` | required | Short identifier shown in the dashboard |
-| `db_path` | `agent_dashboard.db` | SQLite file path (absolute or relative) |
-| `topic_id` | None | Correlation with blogging-agent topic table |
-| `topic_title` | None | Human-readable label shown in the dashboard |
-| `trigger` | auto-detected | `"manual"` or `"actions"` |
-| `metadata` | `{}` | Arbitrary dict stored as JSON |
+| Method | When to call | What it records |
+|--------|-------------|-----------------|
+| `ctx.log_iteration(...)` | Once per `client.messages.create` call | Token counts, stop reason, assistant text preview, which tools were called in this turn |
+| `ctx.log_tool_call(...)` | Once per tool execution | Tool name, full inputs, full result (truncated if large), duration, success/error |
+| `ctx.mark_failed(error)` | If you want to flag failure without raising | Sets run status to `failed` with your message |
+
+The `with RunContext(...) as ctx:` block automatically:
+- Creates the `agent_runs`, `agent_tool_calls`, `agent_iterations` tables in the SQLite file if they don't exist
+- Writes a run record with `status='running'` at the start
+- Updates it to `status='success'` or `status='failed'` (with the exception message) at the end
 
 ---
 
-## Drop-in for blogging-agent
+### Step 3 — Add a "Persist DB" step to your GitHub Actions workflow
 
-The SDK is interface-compatible with `run_logger.RunContext`. To use the dashboard with the blogging-agent, just point `main.py serve` at its SQLite file — no changes to the blogging-agent needed:
+At the end of your job in `.github/workflows/your-workflow.yml`, add this step **after** the step that runs your agent. The `if: always()` ensures the DB is committed even if the agent fails.
+
+```yaml
+- name: Persist agent run DB
+  if: always()
+  run: |
+    git config user.name  "agent-bot"
+    git config user.email "bot@noreply.github.com"
+    git add -f agent_runs.db
+    git diff --staged --quiet || git commit -m "chore: persist agent run data [skip ci]"
+    git push
+```
+
+Also make sure your workflow job has write permissions. Add this at the top level of your workflow file if it isn't already there:
+
+```yaml
+permissions:
+  contents: write
+```
+
+Full minimal workflow example:
+
+```yaml
+name: Run Agent
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 9 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run agent
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: python main.py   # or however you run your agent
+
+      - name: Persist agent run DB
+        if: always()
+        run: |
+          git config user.name  "agent-bot"
+          git config user.email "bot@noreply.github.com"
+          git add -f agent_runs.db
+          git diff --staged --quiet || git commit -m "chore: persist agent run data [skip ci]"
+          git push
+```
+
+---
+
+### Step 4 — Pull the DB locally and open the dashboard
+
+After a GitHub Actions run finishes, pull the committed DB and start the dashboard:
 
 ```bash
-python main.py serve --db ~/blogging-agent/blogging_agent.db
+# In your agent's repo — pull the latest DB
+cd ~/your-agent-project
+git pull
+
+# In the agent-dashboard repo — start the dashboard
+cd ~/Projects/agent-dashboard
+source .venv/bin/activate
+python main.py serve --db ~/your-agent-project/agent_runs.db
+```
+
+Open `http://localhost:7777`.
+
+Every time you want to see fresh data from a new run, just `git pull` in your agent repo and refresh the browser — no need to restart the dashboard.
+
+---
+
+## `RunContext` full reference
+
+```python
+from run_context import RunContext
+
+with RunContext(
+    agent_name="researcher",        # required — label shown in dashboard
+    db_path="./agent_runs.db",      # SQLite path, created if missing
+    topic_title="My task label",    # optional — human-readable run label
+    metadata={"model": "gpt-4o"},   # optional — any JSON-serialisable dict
+) as ctx:
+    ...
+```
+
+### `ctx.log_iteration(...)`
+
+```python
+ctx.log_iteration(
+    tokens_input=response.usage.input_tokens,   # int
+    tokens_output=response.usage.output_tokens, # int
+    stop_reason=response.stop_reason,           # "tool_use" | "end_turn" | "max_tokens"
+    assistant_preview=text[:200],               # str — first ~200 chars of text response
+    tool_names=["search", "write_file"],        # list[str] — tools called in this turn
+    duration_ms=1234,                           # int — how long the LLM call took
+    started_at=datetime.now().isoformat(),      # str — optional, defaults to now
+)
+```
+
+### `ctx.log_tool_call(...)`
+
+```python
+ctx.log_tool_call(
+    tool_name="search",             # str
+    inputs={"query": "..."},        # dict — the arguments passed to the tool
+    result={"results": [...]},      # any — what the tool returned
+    duration_ms=320,                # int — how long the tool took
+    error=None,                     # str | None — pass error string if it failed
+)
+```
+
+### Other methods
+
+```python
+ctx.mark_failed("Timeout after 30s")   # flag run as failed without raising
+ctx.add_tokens(inp=500, out=200)        # manually accumulate tokens (if not using log_iteration)
+```
+
+---
+
+## CLI reference
+
+```bash
+# Serve dashboard pointing at a specific DB
+python main.py serve --db /path/to/agent_runs.db
+
+# Custom port
+python main.py serve --db /path/to/agent_runs.db --port 8080
+
+# Bind to all interfaces (e.g. for access from another machine)
+python main.py serve --db /path/to/agent_runs.db --host 0.0.0.0 --port 7777
+
+# Fresh DB in current directory
+python main.py serve
 ```
 
 ---
@@ -117,14 +319,16 @@ python main.py serve --db ~/blogging-agent/blogging_agent.db
 ```
 agent-dashboard/
 ├── main.py                    # CLI entry point
+├── run_context.py             # Standalone SDK — copy this into any agent project
 ├── requirements.txt
+├── Makefile                   # Shortcuts for blogging-agent integration
 ├── agent_dashboard/
-│   ├── __init__.py            # exports RunContext, set_db_path, init_db
-│   ├── sdk.py                 # RunContext — drop-in for any agent
-│   ├── db.py                  # SQLite schema + all queries
+│   ├── __init__.py
+│   ├── sdk.py                 # RunContext (package version, same interface)
+│   ├── db.py                  # SQLite schema + all read/write queries
 │   └── api.py                 # FastAPI REST endpoints
 └── static/
-    └── index.html             # Single-page dashboard (Alpine.js + Chart.js)
+    └── index.html             # Single-page dashboard (Alpine.js + Chart.js + Tailwind)
 ```
 
 ---
@@ -133,11 +337,23 @@ agent-dashboard/
 
 | Endpoint | Description |
 |---|---|
-| `GET /api/overview` | KPIs, timeline, recent runs, top errors |
-| `GET /api/runs` | Paginated run list (filters: agent, status, search) |
+| `GET /api/overview` | KPIs, 7-day timeline, recent runs, top errors |
+| `GET /api/runs` | Paginated run list (filters: `agent`, `status`, `search`) |
 | `GET /api/runs/{run_id}` | Single run detail |
-| `GET /api/runs/{run_id}/iterations` | LLM turns for a run |
-| `GET /api/runs/{run_id}/tools` | Tool calls for a run |
-| `GET /api/failures` | All failed runs + error grouping |
-| `GET /api/tool-stats` | Per-tool analytics |
-| `GET /api/agent-stats` | Per-agent analytics |
+| `GET /api/runs/{run_id}/iterations` | All LLM turns for a run |
+| `GET /api/runs/{run_id}/tools` | All tool calls for a run |
+| `GET /api/failures` | Failed runs grouped by error pattern |
+| `GET /api/tool-stats` | Per-tool call counts, error rates, avg duration |
+| `GET /api/agent-stats` | Per-agent aggregated stats |
+| `GET /api/agent-names` | List of distinct agent names in the DB |
+
+---
+
+## Makefile shortcuts (for blogging-agent)
+
+```bash
+make blog        # serve dashboard using local blogging-agent DB
+make blog-pull   # git pull blogging-agent DB first, then serve
+make blog-live   # pull DB every 30s in background + serve (near-live mode)
+make fresh       # serve with a brand-new empty DB
+```
