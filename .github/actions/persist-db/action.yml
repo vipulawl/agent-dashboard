@@ -1,0 +1,34 @@
+name: Persist Agent DB
+description: >
+  Commits and pushes the agent_runs SQLite file back to the repo after a run.
+  Add this as the last step in any workflow that uses llm-agent-dashboard.
+
+inputs:
+  db_path:
+    description: Path to the SQLite database file (relative to repo root)
+    required: false
+    default: agent_runs.db
+  commit_message:
+    description: Git commit message
+    required: false
+    default: "chore: persist agent run data [skip ci]"
+  bot_name:
+    description: Git author name for the commit
+    required: false
+    default: "agent-dashboard[bot]"
+  bot_email:
+    description: Git author email for the commit
+    required: false
+    default: "agent-dashboard@users.noreply.github.com"
+
+runs:
+  using: composite
+  steps:
+    - name: Commit and push DB
+      shell: bash
+      run: |
+        git config user.name  "${{ inputs.bot_name }}"
+        git config user.email "${{ inputs.bot_email }}"
+        git add -f "${{ inputs.db_path }}" 2>/dev/null || true
+        git diff --staged --quiet \
+          || git commit -m "${{ inputs.commit_message }}" && git push || true

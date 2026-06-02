@@ -72,34 +72,19 @@ pip install -e ".[anthropic]"   # or: pip install llm-agent-dashboard[anthropic]
 
 ## Wiring up an agent that runs on GitHub Actions
 
-This is a 4-step process. Steps 1–3 happen in your **agent's repo**. Step 4 happens locally after a run completes.
+Three steps. Steps 1–2 happen in your **agent's repo**. Step 3 happens locally after a run.
 
 ---
 
-### Step 1 — Copy `run_context.py` into your agent repo
-
-`run_context.py` is a single self-contained file in the root of this repo. It has no dependencies beyond the Python standard library — just `sqlite3`, `json`, `uuid`, `time`, `os`, and `datetime`.
-
-Copy it into the root of your agent project:
-
-```bash
-cp ~/Projects/agent-dashboard/run_context.py ~/your-agent-project/
-```
-
-Commit it:
-
-```bash
-cd ~/your-agent-project
-git add run_context.py
-git commit -m "add: agent dashboard run_context SDK"
-git push
-```
-
----
-
-### Step 2 — Wrap your agent loop with `RunContext`
+### Step 1 — Install and instrument your agent
 
 Open your agent's main Python file. Import `RunContext` and wrap your existing agent loop with it. You only need to add lines — do not change your existing tool-calling or LLM logic.
+
+Add to your `requirements.txt`:
+
+```
+llm-agent-dashboard[anthropic]
+```
 
 #### Full example for an Anthropic `client.messages.create` loop
 
@@ -194,29 +179,16 @@ The `with RunContext(...) as ctx:` block automatically:
 
 ---
 
-### Step 3 — Add a "Persist DB" step to your GitHub Actions workflow
+### Step 2 — Add the reusable persist action to your workflow
 
-At the end of your job in `.github/workflows/your-workflow.yml`, add this step **after** the step that runs your agent. The `if: always()` ensures the DB is committed even if the agent fails.
+At the end of your job in `.github/workflows/your-workflow.yml`, replace the multi-line bash persist block with one line:
 
 ```yaml
-- name: Persist agent run DB
+- uses: vipulawl/agent-dashboard/.github/actions/persist-db@main
   if: always()
-  run: |
-    git config user.name  "agent-bot"
-    git config user.email "bot@noreply.github.com"
-    git add -f agent_runs.db
-    git diff --staged --quiet || git commit -m "chore: persist agent run data [skip ci]"
-    git push
 ```
 
-Also make sure your workflow job has write permissions. Add this at the top level of your workflow file if it isn't already there:
-
-```yaml
-permissions:
-  contents: write
-```
-
-Full minimal workflow example:
+That's it. Full minimal workflow:
 
 ```yaml
 name: Run Agent
@@ -247,38 +219,37 @@ jobs:
       - name: Run agent
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: python main.py   # or however you run your agent
+        run: python main.py
 
-      - name: Persist agent run DB
+      - uses: vipulawl/agent-dashboard/.github/actions/persist-db@main
         if: always()
-        run: |
-          git config user.name  "agent-bot"
-          git config user.email "bot@noreply.github.com"
-          git add -f agent_runs.db
-          git diff --staged --quiet || git commit -m "chore: persist agent run data [skip ci]"
-          git push
+```
+
+Optional inputs (all have defaults):
+
+```yaml
+- uses: vipulawl/agent-dashboard/.github/actions/persist-db@main
+  if: always()
+  with:
+    db_path: agent_runs.db                        # default
+    commit_message: "chore: persist run data [skip ci]"   # default
 ```
 
 ---
 
-### Step 4 — Pull the DB locally and open the dashboard
-
-After a GitHub Actions run finishes, pull the committed DB and start the dashboard:
+### Step 3 — Pull and open the dashboard in one command
 
 ```bash
-# In your agent's repo — pull the latest DB
-cd ~/your-agent-project
-git pull
-
-# In the agent-dashboard repo — start the dashboard
-cd ~/Projects/agent-dashboard
-source .venv/bin/activate
-python main.py serve --db ~/your-agent-project/agent_runs.db
+agent-dashboard pull-and-serve --repo ~/your-agent-project --db agent_runs.db
 ```
 
 Open `http://localhost:7777`.
 
-Every time you want to see fresh data from a new run, just `git pull` in your agent repo and refresh the browser — no need to restart the dashboard.
+To keep it live — auto-pull every 30 seconds while the dashboard is open:
+
+```bash
+agent-dashboard pull-and-serve --repo ~/your-agent-project --db agent_runs.db --interval 30
+```
 
 ---
 
@@ -416,4 +387,13 @@ make blog        # serve dashboard using local blogging-agent DB
 make blog-pull   # git pull blogging-agent DB first, then serve
 make blog-live   # pull DB every 30s in background + serve (near-live mode)
 make fresh       # serve with a brand-new empty DB
+```
+
+These are equivalent to:
+
+```bash
+agent-dashboard serve --db ~/blogging-agent/blogging_agent.db
+agent-dashboard pull-and-serve --repo ~/blogging-agent --db blogging_agent.db
+agent-dashboard pull-and-serve --repo ~/blogging-agent --db blogging_agent.db --interval 30
+agent-dashboard serve
 ```
