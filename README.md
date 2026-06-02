@@ -4,7 +4,35 @@ Self-hosted observability dashboard for agentic flows. Captures every LLM turn, 
 
 ```
 Overview → All Runs → Run Detail (iteration timeline + tool call table)
-         → Failures  → Tool Analytics
+         → Failures & Skips  → Tool Analytics
+```
+
+---
+
+## Quickstart — plug into any Anthropic agent in 3 lines
+
+```bash
+pip install agent-dashboard
+```
+
+```python
+from agent_dashboard import RunContext
+from agent_dashboard.anthropic import Anthropic   # drop-in for anthropic.Anthropic
+
+client = Anthropic()   # same constructor args as anthropic.Anthropic()
+
+with RunContext("my_agent", db_path="./agent_runs.db") as ctx:
+    client.set_context(ctx)          # attach — all messages.create() calls auto-logged
+    # ... your existing agent code, zero other changes ...
+    response = client.messages.create(model=..., messages=..., tools=...)
+    # tokens, stop reason, tool names, duration — all captured automatically
+```
+
+Start the dashboard:
+
+```bash
+agent-dashboard serve --db ./agent_runs.db
+# → http://localhost:7777
 ```
 
 ---
@@ -22,15 +50,22 @@ Auto-refreshes every 30 seconds. Live indicator for currently-running agents.
 
 ---
 
-## Dashboard setup (local, one-time)
+## Installation
 
-Run these once in the agent-dashboard repo:
+**From PyPI** (recommended):
+
+```bash
+pip install agent-dashboard                    # core
+pip install "agent-dashboard[anthropic]"       # + auto-instrumented Anthropic client
+```
+
+**From source** (for local development):
 
 ```bash
 cd ~/Projects/agent-dashboard
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -e ".[anthropic]"
 ```
 
 ---
@@ -316,19 +351,23 @@ Without this pattern, "nothing to do" runs are invisible — you can't tell if t
 
 ## CLI reference
 
+After `pip install agent-dashboard` the `agent-dashboard` command is available globally:
+
 ```bash
 # Serve dashboard pointing at a specific DB
-python main.py serve --db /path/to/agent_runs.db
+agent-dashboard serve --db /path/to/agent_runs.db
 
 # Custom port
-python main.py serve --db /path/to/agent_runs.db --port 8080
+agent-dashboard serve --db /path/to/agent_runs.db --port 8080
 
-# Bind to all interfaces (e.g. for access from another machine)
-python main.py serve --db /path/to/agent_runs.db --host 0.0.0.0 --port 7777
+# Bind to all interfaces (e.g. accessible from another machine on your network)
+agent-dashboard serve --db /path/to/agent_runs.db --host 0.0.0.0 --port 7777
 
 # Fresh DB in current directory
-python main.py serve
+agent-dashboard serve
 ```
+
+Or keep using `python main.py serve` if running from source.
 
 ---
 
@@ -336,13 +375,16 @@ python main.py serve
 
 ```
 agent-dashboard/
-├── main.py                    # CLI entry point
+├── pyproject.toml             # Package metadata — pip install agent-dashboard
+├── main.py                    # CLI entry point (python main.py serve)
 ├── run_context.py             # Standalone SDK — copy this into any agent project
 ├── requirements.txt
 ├── Makefile                   # Shortcuts for blogging-agent integration
 ├── agent_dashboard/
-│   ├── __init__.py
-│   ├── sdk.py                 # RunContext (package version, same interface)
+│   ├── __init__.py            # exports RunContext, set_db_path, init_db
+│   ├── sdk.py                 # RunContext implementation
+│   ├── anthropic.py           # Auto-instrumented Anthropic client (drop-in)
+│   ├── cli.py                 # agent-dashboard CLI entry point
 │   ├── db.py                  # SQLite schema + all read/write queries
 │   └── api.py                 # FastAPI REST endpoints
 └── static/

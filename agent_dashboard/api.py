@@ -5,7 +5,10 @@ from fastapi.staticfiles import StaticFiles
 
 from agent_dashboard import db
 
+# Works both from source (../../static) and after pip install (../static via shared-data)
 _STATIC = Path(__file__).parent.parent / "static"
+if not _STATIC.exists():
+    _STATIC = Path(__file__).parent / "static"
 
 app = FastAPI(title="Agent Dashboard", docs_url=None, redoc_url=None)
 

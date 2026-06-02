@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agent-dashboard"
+version = "0.1.0"
+description = "Self-hosted observability dashboard for agentic flows — every LLM turn, tool call, and failure captured"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+keywords = ["llm", "observability", "agent", "dashboard", "anthropic", "openai"]
+dependencies = [
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.27.0",
+]
+
+[project.optional-dependencies]
+anthropic = ["anthropic>=0.20.0"]
+
+[project.scripts]
+agent-dashboard = "agent_dashboard.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["agent_dashboard"]
+
+[tool.hatch.build.targets.wheel.shared-data]
+"static" = "agent_dashboard/static"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "agent_dashboard/",
+    "static/",
+    "run_context.py",
+    "README.md",
+    "requirements.txt",
+]
