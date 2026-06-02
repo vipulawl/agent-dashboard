@@ -87,6 +87,7 @@ def get_kpis() -> dict:
         total = conn.execute("SELECT COUNT(*) FROM agent_runs").fetchone()[0]
         success = conn.execute("SELECT COUNT(*) FROM agent_runs WHERE status='success'").fetchone()[0]
         failed = conn.execute("SELECT COUNT(*) FROM agent_runs WHERE status='failed'").fetchone()[0]
+        skipped = conn.execute("SELECT COUNT(*) FROM agent_runs WHERE status='skipped'").fetchone()[0]
         running = conn.execute("SELECT COUNT(*) FROM agent_runs WHERE status='running'").fetchone()[0]
         tokens = conn.execute("SELECT SUM(tokens_input + tokens_output) FROM agent_runs").fetchone()[0] or 0
         avg_dur = conn.execute(
@@ -98,6 +99,7 @@ def get_kpis() -> dict:
         "total_runs": total,
         "success_rate": round(success / total * 100, 1) if total > 0 else 0,
         "failed_runs": failed,
+        "skipped_runs": skipped,
         "running_count": running,
         "total_tokens": tokens,
         "avg_duration_seconds": round(avg_dur, 1),
@@ -123,8 +125,9 @@ def get_timeline(days: int = 7) -> list[dict]:
             row = conn.execute("""
                 SELECT
                     SUM(CASE WHEN status='success' THEN 1 ELSE 0 END) as success,
-                    SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) as failed,
-                    SUM(CASE WHEN status='running' THEN 1 ELSE 0 END) as running
+                    SUM(CASE WHEN status='failed'  THEN 1 ELSE 0 END) as failed,
+                    SUM(CASE WHEN status='running' THEN 1 ELSE 0 END) as running,
+                    SUM(CASE WHEN status='skipped' THEN 1 ELSE 0 END) as skipped
                 FROM agent_runs
                 WHERE date(started_at) = ?
             """, (d,)).fetchone()
@@ -133,6 +136,7 @@ def get_timeline(days: int = 7) -> list[dict]:
                 "success": row["success"] or 0,
                 "failed": row["failed"] or 0,
                 "running": row["running"] or 0,
+                "skipped": row["skipped"] or 0,
             })
     return result
 
@@ -228,14 +232,18 @@ def get_tools_for_run(run_id: str) -> list[dict]:
 
 def get_failures() -> dict:
     with get_conn() as conn:
-        runs = conn.execute(
+        failed = conn.execute(
             "SELECT * FROM agent_runs WHERE status='failed' ORDER BY started_at DESC LIMIT 100"
         ).fetchall()
-    runs_list = [dict(r) for r in runs]
-    errors = [r["error_message"] or "Unknown error" for r in runs_list]
+        skipped = conn.execute(
+            "SELECT * FROM agent_runs WHERE status='skipped' ORDER BY started_at DESC LIMIT 100"
+        ).fetchall()
+    failed_list = [dict(r) for r in failed]
+    skipped_list = [dict(r) for r in skipped]
+    errors = [r["error_message"] or "Unknown error" for r in failed_list]
     patterns = [e.split("\n")[0][:120] for e in errors]
     error_groups = dict(Counter(patterns).most_common(10))
-    return {"runs": runs_list, "error_groups": error_groups}
+    return {"runs": failed_list, "skipped_runs": skipped_list, "error_groups": error_groups}
 
 
 # ── Read: tool analytics ──────────────────────────────────────────────────────

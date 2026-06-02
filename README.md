@@ -290,9 +290,27 @@ ctx.log_tool_call(
 ### Other methods
 
 ```python
-ctx.mark_failed("Timeout after 30s")   # flag run as failed without raising
-ctx.add_tokens(inp=500, out=200)        # manually accumulate tokens (if not using log_iteration)
+ctx.mark_failed("Timeout after 30s")              # flag run as failed without raising
+ctx.mark_skipped("No topics ready to publish")    # record a no-op run as 'skipped'
+ctx.add_tokens(inp=500, out=200)                  # manually accumulate tokens (if not using log_iteration)
 ```
+
+#### Capturing silent skips — important pattern
+
+Wrap your agent at the **outermost level**, before any conditional logic. This ensures every invocation is recorded — including runs where the agent decides there is nothing to do:
+
+```python
+with RunContext("scheduler", db_path=DB_PATH) as ctx:
+    topics = get_ready_topics()
+    if not topics:
+        ctx.mark_skipped("No topics ready to publish")
+        # returns here — run is recorded as 'skipped', visible on the dashboard
+    else:
+        for topic in topics:
+            process(topic, ctx)
+```
+
+Without this pattern, "nothing to do" runs are invisible — you can't tell if the agent ran and skipped, or never ran at all. With it, every run shows up in the Failures & Skips page.
 
 ---
 

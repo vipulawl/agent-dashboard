@@ -147,6 +147,7 @@ class RunContext:
         self._tokens_output = 0
         self._seq = 0
         self._error: str | None = None
+        self._skipped_reason: str | None = None
 
     def __enter__(self) -> "RunContext":
         _init_db(self._db_path)
@@ -163,7 +164,15 @@ class RunContext:
     def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
         if exc_type is not None:
             self._error = f"{exc_type.__name__}: {exc_val}"
-        status = "failed" if self._error else "success"
+        if self._skipped_reason:
+            status = "skipped"
+            error_msg = self._skipped_reason
+        elif self._error:
+            status = "failed"
+            error_msg = self._error
+        else:
+            status = "success"
+            error_msg = None
         with _conn(self._db_path) as conn:
             conn.execute(
                 """UPDATE agent_runs SET
@@ -173,13 +182,21 @@ class RunContext:
                 (status, datetime.now().isoformat(),
                  round(time.monotonic() - self._start_mono, 2),
                  self._iterations, self._tokens_input, self._tokens_output,
-                 self._error, self.run_id),
+                 error_msg, self.run_id),
             )
         return False
 
     def mark_failed(self, error: str) -> None:
         """Call this to mark the run as failed without raising an exception."""
         self._error = error
+
+    def mark_skipped(self, reason: str = "nothing to do") -> None:
+        """
+        Call this when the agent decides there is nothing to process this run.
+        The run is still recorded (so you can see it in the dashboard) but with
+        status='skipped' instead of 'success' or 'failed'.
+        """
+        self._skipped_reason = reason
 
     def add_tokens(self, inp: int, out: int) -> None:
         """Accumulate token counts for the run total."""
