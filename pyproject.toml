@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "agent-dashboard"
+name = "llm-agent-dashboard"
 version = "0.1.0"
 description = "Self-hosted observability dashboard for agentic flows — every LLM turn, tool call, and failure captured"
 readme = "README.md"

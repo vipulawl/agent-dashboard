@@ -12,7 +12,7 @@ Overview → All Runs → Run Detail (iteration timeline + tool call table)
 ## Quickstart — plug into any Anthropic agent in 3 lines
 
 ```bash
-pip install agent-dashboard
+pip install llm-agent-dashboard
 ```
 
 ```python
@@ -55,8 +55,8 @@ Auto-refreshes every 30 seconds. Live indicator for currently-running agents.
 **From PyPI** (recommended):
 
 ```bash
-pip install agent-dashboard                    # core
-pip install "agent-dashboard[anthropic]"       # + auto-instrumented Anthropic client
+pip install llm-agent-dashboard                    # core
+pip install "llm-agent-dashboard[anthropic]"       # + auto-instrumented Anthropic client
 ```
 
 **From source** (for local development):
@@ -65,7 +65,7 @@ pip install "agent-dashboard[anthropic]"       # + auto-instrumented Anthropic c
 cd ~/Projects/agent-dashboard
 python -m venv .venv
 source .venv/bin/activate
-pip install -e ".[anthropic]"
+pip install -e ".[anthropic]"   # or: pip install llm-agent-dashboard[anthropic]
 ```
 
 ---
@@ -351,7 +351,7 @@ Without this pattern, "nothing to do" runs are invisible — you can't tell if t
 
 ## CLI reference
 
-After `pip install agent-dashboard` the `agent-dashboard` command is available globally:
+After `pip install llm-agent-dashboard` the `agent-dashboard` command is available globally:
 
 ```bash
 # Serve dashboard pointing at a specific DB
@@ -375,7 +375,7 @@ Or keep using `python main.py serve` if running from source.
 
 ```
 agent-dashboard/
-├── pyproject.toml             # Package metadata — pip install agent-dashboard
+├── pyproject.toml             # Package metadata — pip install llm-agent-dashboard
 ├── main.py                    # CLI entry point (python main.py serve)
 ├── run_context.py             # Standalone SDK — copy this into any agent project
 ├── requirements.txt
