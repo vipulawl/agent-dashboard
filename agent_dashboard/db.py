@@ -275,6 +275,27 @@ def get_tool_stats() -> list[dict]:
     return result
 
 
+def get_token_timeline(days: int = 30) -> list[dict]:
+    result = []
+    today = datetime.utcnow().date()
+    with get_conn() as conn:
+        for i in range(days - 1, -1, -1):
+            d = (today - timedelta(days=i)).isoformat()
+            row = conn.execute("""
+                SELECT
+                    COALESCE(SUM(tokens_input), 0)  as tokens_input,
+                    COALESCE(SUM(tokens_output), 0) as tokens_output
+                FROM agent_runs
+                WHERE date(started_at) = ?
+            """, (d,)).fetchone()
+            result.append({
+                "date": d[5:],
+                "tokens_input": row["tokens_input"],
+                "tokens_output": row["tokens_output"],
+            })
+    return result
+
+
 def get_agent_names() -> list[str]:
     with get_conn() as conn:
         rows = conn.execute(

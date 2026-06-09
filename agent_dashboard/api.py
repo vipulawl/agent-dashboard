@@ -78,3 +78,8 @@ async def agent_stats():
 @app.get("/api/agent-names")
 async def agent_names():
     return db.get_agent_names()
+
+
+@app.get("/api/token-timeline")
+async def token_timeline(days: int = Query(30, ge=1, le=365)):
+    return db.get_token_timeline(days=days)
