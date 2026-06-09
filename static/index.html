@@ -738,77 +738,29 @@
           </div>
         </div>
 
-        <!-- Chart -->
-        <div class="bg-slate-800/80 rounded-xl p-5 border border-slate-700/60">
-          <div class="flex items-center justify-between mb-5">
-            <div class="text-sm font-semibold text-slate-300">Daily Tokens — Last <span x-text="tokenDays"></span> Days</div>
-            <div class="flex items-center gap-4 text-xs text-slate-500">
-              <span class="flex items-center gap-1.5">
-                <span class="w-2.5 h-2.5 rounded-sm inline-block" style="background:rgba(96,165,250,.7)"></span>Input
-              </span>
-              <span class="flex items-center gap-1.5">
-                <span class="w-2.5 h-2.5 rounded-sm inline-block" style="background:rgba(167,139,250,.7)"></span>Output
-              </span>
-            </div>
-          </div>
-
-          <div class="relative" style="height:220px">
-            <!-- Y-axis -->
-            <div class="absolute top-0 bottom-6 left-0 flex flex-col justify-between text-right pr-2" style="width:44px">
-              <span class="text-xs text-slate-600" x-text="formatTokens(tokenMax)"></span>
-              <span class="text-xs text-slate-600" x-text="formatTokens(Math.round(tokenMax*.75))"></span>
-              <span class="text-xs text-slate-600" x-text="formatTokens(Math.round(tokenMax*.5))"></span>
-              <span class="text-xs text-slate-600" x-text="formatTokens(Math.round(tokenMax*.25))"></span>
-              <span class="text-xs text-slate-600">0</span>
-            </div>
-
-            <!-- Plot area -->
-            <div class="absolute inset-0" style="left:44px">
-              <!-- Grid lines -->
-              <div class="absolute inset-x-0" style="top:0;bottom:24px">
-                <div class="absolute inset-x-0 top-0 border-t border-slate-700/40"></div>
-                <div class="absolute inset-x-0 border-t border-slate-700/25" style="top:25%"></div>
-                <div class="absolute inset-x-0 border-t border-slate-700/25" style="top:50%"></div>
-                <div class="absolute inset-x-0 border-t border-slate-700/25" style="top:75%"></div>
-                <div class="absolute inset-x-0 bottom-0 border-t border-slate-700/40"></div>
-              </div>
-
-              <!-- Bars -->
-              <div class="absolute inset-x-0 flex gap-px" style="top:0;bottom:24px">
-                <template x-for="day in tokenTimeline" :key="day.date">
-                  <div class="flex-1 flex flex-col justify-end group relative min-w-0">
-                    <!-- Hover tooltip -->
-                    <div class="absolute bottom-full mb-1.5 left-1/2 -translate-x-1/2 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-2 text-xs whitespace-nowrap z-20 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none shadow-lg">
-                      <div class="text-slate-400 font-medium mb-1" x-text="day.date"></div>
-                      <div class="text-blue-400">In: <span x-text="formatTokens(day.tokens_input)"></span></div>
-                      <div class="text-violet-400">Out: <span x-text="formatTokens(day.tokens_output)"></span></div>
-                      <div class="text-slate-200 font-semibold border-t border-slate-700 mt-1 pt-1">Total: <span x-text="formatTokens(day.tokens_input+day.tokens_output)"></span></div>
-                    </div>
-                    <!-- Output segment -->
-                    <div class="w-full transition-all"
-                         style="background:rgba(167,139,250,.6)"
-                         :style="'height:' + (day.tokens_output > 0 ? Math.max(day.tokens_output/tokenMax*100, 1) : 0) + '%'"></div>
-                    <!-- Input segment -->
-                    <div class="w-full transition-all"
-                         style="background:rgba(96,165,250,.6)"
-                         :style="'height:' + (day.tokens_input > 0 ? Math.max(day.tokens_input/tokenMax*100, 1) : 0) + '%'"></div>
-                  </div>
-                </template>
-              </div>
-
-              <!-- X labels -->
-              <div class="absolute inset-x-0 bottom-0 flex gap-px" style="height:24px">
-                <template x-for="(day, i) in tokenTimeline" :key="day.date+'-x'">
-                  <div class="flex-1 flex items-end justify-center min-w-0">
-                    <span class="text-slate-600 leading-none"
-                          style="font-size:9px"
-                          x-show="tokenDays <= 14 || i % Math.ceil(tokenDays/14) === 0"
-                          x-text="day.date"></span>
-                  </div>
-                </template>
-              </div>
-            </div>
-          </div>
+        <!-- Daily table -->
+        <div class="bg-slate-800/80 rounded-xl border border-slate-700/60 overflow-hidden">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-slate-500 text-xs border-b border-slate-700/60">
+                <th class="px-4 py-3 text-left font-medium">Date</th>
+                <th class="px-4 py-3 text-right font-medium">Input</th>
+                <th class="px-4 py-3 text-right font-medium">Output</th>
+                <th class="px-4 py-3 text-right font-medium">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="day in [...tokenTimeline].reverse()" :key="day.date">
+                <tr class="border-b border-slate-700/30"
+                    :class="(day.tokens_input + day.tokens_output) === 0 ? 'opacity-30' : ''">
+                  <td class="px-4 py-2.5 text-slate-300 font-mono text-xs" x-text="day.date"></td>
+                  <td class="px-4 py-2.5 text-blue-400 text-xs text-right" x-text="formatTokens(day.tokens_input)"></td>
+                  <td class="px-4 py-2.5 text-violet-400 text-xs text-right" x-text="formatTokens(day.tokens_output)"></td>
+                  <td class="px-4 py-2.5 text-slate-200 text-xs text-right font-semibold" x-text="formatTokens(day.tokens_input + day.tokens_output)"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
         </div>
       </div>
       </template>
