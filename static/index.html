@@ -695,7 +695,8 @@
       </div>
 
       <!-- ── TOKENS ── -->
-      <div x-show="page === 'tokens'" x-cloak class="fade-in">
+      <template x-if="page === 'tokens'">
+      <div class="fade-in">
         <div class="flex items-center justify-between mb-6">
           <h1 class="text-xl font-bold text-white">Token Consumption</h1>
           <div class="flex items-center gap-2">
@@ -743,6 +744,7 @@
           <canvas id="tokenChart"></canvas>
         </div>
       </div>
+      </template>
 
     </div>
   </main>
@@ -921,7 +923,7 @@ function app() {
       const data = await this.get('/api/token-timeline?days=' + this.tokenDays);
       this.tokenTimeline = data || [];
       await this.$nextTick();
-      setTimeout(() => this.renderTokenChart(), 50);
+      this.renderTokenChart();
     },
 
     renderTokenChart() {
@@ -972,7 +974,6 @@ function app() {
           }
         }
       });
-      setTimeout(() => this._tokenChart && this._tokenChart.resize(), 50);
     },
 
     // Helpers
