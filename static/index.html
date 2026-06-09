@@ -923,7 +923,7 @@ function app() {
       const data = await this.get('/api/token-timeline?days=' + this.tokenDays);
       this.tokenTimeline = data || [];
       await this.$nextTick();
-      this.renderTokenChart();
+      requestAnimationFrame(() => this.renderTokenChart());
     },
 
     renderTokenChart() {
