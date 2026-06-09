@@ -740,9 +740,7 @@
         <!-- Chart -->
         <div class="bg-slate-800/80 rounded-xl p-5 border border-slate-700/60">
           <div class="text-sm font-semibold text-slate-300 mb-4">Daily Tokens — Last <span x-text="tokenDays"></span> Days</div>
-          <div style="height: 320px; position: relative;">
-            <canvas id="tokenChart"></canvas>
-          </div>
+          <canvas id="tokenChart"></canvas>
         </div>
       </div>
 
@@ -923,7 +921,7 @@ function app() {
       const data = await this.get('/api/token-timeline?days=' + this.tokenDays);
       this.tokenTimeline = data || [];
       await this.$nextTick();
-      requestAnimationFrame(() => this.renderTokenChart());
+      setTimeout(() => this.renderTokenChart(), 50);
     },
 
     renderTokenChart() {
@@ -954,7 +952,8 @@ function app() {
         },
         options: {
           responsive: true,
-          maintainAspectRatio: false,
+          maintainAspectRatio: true,
+          aspectRatio: 3.5,
           plugins: {
             legend: { labels: { color: '#94a3b8', font: { size: 11 } } },
             tooltip: {
@@ -973,6 +972,7 @@ function app() {
           }
         }
       });
+      setTimeout(() => this._tokenChart && this._tokenChart.resize(), 50);
     },
 
     // Helpers
